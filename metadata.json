@@ -1,0 +1,5 @@
+{
+  "name": "智能课堂签到系统",
+  "description": "基于AI人脸识别的课堂签到工具，支持多图上传、自动去重并导出Excel签到表。",
+  "requestFramePermissions": []
+}
