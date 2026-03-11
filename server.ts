@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
@@ -355,6 +356,19 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
   }
 });
 
+// 在 server.ts 中
+
+
+app.post("/api/analyze-attendance", async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY; // 后端读取，绝对安全
+  const { images } = req.body;
+  
+  // ... 把 geminiService.ts 里的 processAttendanceImages 逻辑搬到这里 ...
+  // ... 调用 ai.models.generateContent ...
+
+  res.json({ success: true, data: identifiedPersons });
+});
+
 // Vite middleware for development
 if (process.env.NODE_ENV !== "production") {
   const vite = await createViteServer({
@@ -379,3 +393,5 @@ app.listen(PORT, "0.0.0.0", () => {
 
 // 依然可以保留导出，不会影响 Cloud Run，且兼容其他可能依赖它的工具
 export default app;
+
+

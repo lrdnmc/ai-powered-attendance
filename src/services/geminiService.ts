@@ -20,16 +20,16 @@ export interface IdentifiedPerson {
  * @param images 图片数据数组
  * @param customApiKey 用户手动输入的 API Key
  */
-export async function processAttendanceImages(
-  images: { data: string; name: string }[], 
-  customApiKey?: string
-): Promise<IdentifiedPerson[]> {
-  // 优先级：手动输入 > 环境变量
-  const apiKey = customApiKey || process.env.GEMINI_API_KEY;
-  
-  if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey.trim() === "") {
-    throw new Error("未检测到有效的 API Key。请点击右上角设置图标输入您的 Gemini API Key，或在 AI Studio 的 'Settings -> Secrets' 中添加 GEMINI_API_KEY。");
-  }
+// 修改后的前端 src/services/geminiService.ts
+export async function processAttendanceImages(images) {
+  const response = await fetch('/api/analyze-attendance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images })
+  });
+  const result = await response.json();
+  return result.data;
+}
 
   const ai = new GoogleGenAI({ apiKey });
   
