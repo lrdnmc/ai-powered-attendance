@@ -79,7 +79,11 @@ if (isPostgres) {
   };
 } else {
   console.log("Using SQLite database...");
-  const sqlite = new Database("attendance.db");
+  // 💡 修改1：判断如果是 Cloud Run 或生产环境，使用内存挂载目录 /tmp 防止只读报错
+  const isCloudRun = !!process.env.K_SERVICE || process.env.NODE_ENV === "production";
+  const dbPath = isCloudRun ? "/tmp/attendance.db" : "attendance.db";
+  
+  const sqlite = new Database(dbPath);
   sqlite.exec("PRAGMA foreign_keys = ON;");
   
   db = {
@@ -95,15 +99,9 @@ if (isPostgres) {
     transaction: (fn: any) => {
       return async (...args: any[]) => {
         const trans = sqlite.transaction((...args: any[]) => {
-          // better-sqlite3 transactions are synchronous. 
-          // If we need async, we can't use this wrapper easily with async fn.
-          // However, we can run the fn and if it returns a promise, we have a problem.
           return fn(null, ...args);
         });
         
-        // For SQLite in this app, we'll just execute the function.
-        // If it's async, we'll handle it outside the better-sqlite3 transaction 
-        // or use BEGIN/COMMIT manually for async support.
         try {
           sqlite.prepare('BEGIN').run();
           const result = await fn(null, ...args);
@@ -160,7 +158,6 @@ const initDb = async () => {
   `;
   
   if (isPostgres) {
-    // Postgres specific adjustments if needed
     await db.exec(schema.replace(/TEXT PRIMARY KEY/g, "VARCHAR(255) PRIMARY KEY").replace(/TEXT/g, "TEXT"));
   } else {
     db.exec(schema);
@@ -188,8 +185,6 @@ const initDb = async () => {
     await db.exec("ALTER TABLE attendance ADD COLUMN photo TEXT");
   }
 };
-
-initDb();
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -258,7 +253,6 @@ app.get("/api/sessions/:id", async (req, res) => {
 });
 
 app.delete("/api/sessions/:id", async (req, res) => {
-  // Basic check: in a real app we'd use a token, but here we just check if they are logged in (simplified)
   try {
     await db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
     res.json({ success: true });
@@ -286,7 +280,7 @@ app.post("/api/sessions/:id/records", async (req, res) => {
       .run(id, req.params.id, personId || `M${Date.now()}`, description || "手动添加", "[]", name || "", studentId || "", photo || null);
     res.json({ id, personId, description, name, studentId, photo });
   } catch (err: any) {
-    // 💡 修改3：在后端日志打印真实错误，并将其返回给前端
+    // 💡 修改3：抛出真实的错误给前端，方便调试排错
     console.error("【数据库写入详细错误】:", err);
     res.status(500).json({ error: `数据库添加失败: ${err.message || String(err)}` });
   }
@@ -299,6 +293,26 @@ app.delete("/api/sessions/:id/records/:personId", async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "删除记录失败" });
+  }
+});
+
+// 💡 新增：批量删除接口
+app.post("/api/sessions/:id/records/batch-delete", async (req, res) => {
+  const { personIds } = req.body;
+  
+  if (!personIds || !Array.isArray(personIds) || personIds.length === 0) {
+    return res.status(400).json({ success: false, error: "请提供要删除的记录ID数组" });
+  }
+
+  try {
+    const placeholders = personIds.map(() => '?').join(',');
+    await db.prepare(`DELETE FROM attendance WHERE sessionId = ? AND personId IN (${placeholders})`)
+      .run(req.params.id, ...personIds);
+      
+    res.json({ success: true, deletedCount: personIds.length });
+  } catch (err: any) {
+    console.error("Batch delete error:", err);
+    res.status(500).json({ success: false, error: `批量删除失败: ${err.message}` });
   }
 });
 
@@ -325,12 +339,12 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
         return db.prepare(sql).all(...args);
       };
 
-      // 1. Handle images
+      // 1. Handle images (防 null 处理)
       if (images && images.length > 0) {
         await run("DELETE FROM session_images WHERE sessionId = ?", [sessionId]);
         for (const img of images) {
           await run("INSERT INTO session_images (id, sessionId, data, imageIndex) VALUES (?, ?, ?, ?)", 
-            [uuidv4(), sessionId, img.data, img.index]);
+            [uuidv4(), sessionId, img.data || "", img.index || 0]);
         }
       }
 
@@ -340,12 +354,17 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
 
       for (const rec of records) {
         const recordId = `${sessionId}_${rec.id}`;
+        
+        // 💡 核心修复：强制消除 undefined，防止 Postgres 驱动崩溃
+        const safeDescription = rec.description || "";
+        const safeAppearances = JSON.stringify(rec.appearances || []);
+
         if (existingPersonIds.has(rec.id)) {
           await run("UPDATE attendance SET description = ?, appearances = ? WHERE sessionId = ? AND personId = ?", 
-            [rec.description, JSON.stringify(rec.appearances), sessionId, rec.id]);
+            [safeDescription, safeAppearances, sessionId, rec.id]);
         } else {
           await run("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-            [recordId, sessionId, rec.id, rec.description, JSON.stringify(rec.appearances), "", ""]);
+            [recordId, sessionId, rec.id, safeDescription, safeAppearances, "", ""]);
         }
       }
     };
@@ -358,14 +377,10 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
   }
 });
 
-// 在 server.ts 中
-
 app.post("/api/analyze-attendance", async (req, res) => {
   try {
-    // 不再从 req.body 接收 customApiKey，只接收 images
     const { images } = req.body; 
     
-    // 【最核心的安全保障】：唯一获取 Key 的途径是服务器自身的系统环境变量
     const apiKey = process.env.GEMINI_API_KEY;
     
     if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey.trim() === "") {
@@ -387,19 +402,22 @@ app.post("/api/analyze-attendance", async (req, res) => {
     });
 
     const prompt = `
-      你是一个顶级课堂考勤助手。这是一个大型课程（约 41 人）。
-      请深度分析照片，识别出尽可能多的不重复到课人员。
-      
-      关键准则：
-      1. 真实识别：根据照片实际情况识别，不需要强行凑满 41 人。
-      2. 必须有头：仅识别头部清晰可见的人员，严禁识别只有身体、没有头部的目标。严禁将衣服、窗帘、椅子或其他非生物物体误认为人员。
-      3. 全场扫描：仔细寻找后排、角落、侧脸或被部分遮挡的真实人员。
-      4. 跨图去重与关联：通过面部、发型、衣着和座位位置确保同一个人只出现一次。
-      5. 详细描述：对人员的特征进行详细描述（15-30字）。
-      6. 严格使用极简 JSON 结构：[{"id":"P1","d":"描述","a":[{"i":1,"b":[y,x,y,x]}]}]
-      i 是图片索引(1-based)，b 是 [ymin, xmin, ymax, xmax]。
-      
-      请直接返回 JSON 数组，不要任何开头或结尾文字。
+    你是一个顶级课堂考勤助手。这是一个大型课程（约 41 人）。
+    请深度分析照片，识别出**尽可能多**的不重复到课人员。
+    
+    关键准则：
+    1. **真实识别**：根据照片实际情况识别，不需要强行凑满 41 人。
+    2. **必须有头**：仅识别头部清晰可见的人员，**严禁**识别只有身体、没有头部的目标。**严禁**将衣服、窗帘、椅子或其他非生物物体误认为人员。
+    3. **全场扫描**：仔细寻找后排、角落、侧脸或被部分遮挡的真实人员。
+    4. **跨图去重与关联**：
+       - 通过面部、发型、衣着和座位位置确保同一个人只出现一次。
+       - **跨图一致性**：如果一个人出现在多张图中，必须深度比对细节，确保确实是同一个人。如果无法 100% 确定是同一人，请作为不同人员处理。
+    5. **详细描述**：对人员的特征进行详细描述（15-30字），包括性别、发型、眼镜、衣服颜色及款式、配饰、座位位置特征等。用中文进行描述。
+    6. **严格使用极简 JSON 结构**：
+       [{"id":"P1","d":"描述","a":[{"i":1,"b":[y,x,y,x]}]}]
+       i 是图片索引(1-based)，b 是 [ymin, xmin, ymax, xmax]。
+    
+    请直接返回 JSON 数组，不要任何开头或结尾文字。
     `;
 
     contents.push({ text: prompt });
@@ -458,34 +476,32 @@ app.post("/api/analyze-attendance", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-// 无论什么环境，都必须启动服务器并监听端口
-// 优先使用环境变量传入的端口 (Cloud Run 会传入 8080)，如果不存在则默认 3000 (用于本地开发)
 
 if (process.env.NODE_ENV !== "production") {
-  // 本地开发环境：使用 Vite 中间件
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: "spa",
   });
   app.use(vite.middlewares);
 } else {
-  // 云端生产环境：提供 dist 目录下的静态文件
   app.use(express.static(path.join(__dirname, "dist")));
   
-  // 捕获所有其他路由，交回给前端 React/Vite 处理 (支持前端路由)
   app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "dist", "index.html"));
   });
 }
 
-
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// 💡 修改2：强制等待数据库初始化与建表完全结束，再开始接收前端请求
+initDb()
+  .then(() => {
+    app.listen(PORT as number, "0.0.0.0", () => {
+      console.log(`✅ Server successfully running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("❌ 数据库初始化彻底失败:", err);
+  });
 
-// 依然可以保留导出，不会影响 Cloud Run，且兼容其他可能依赖它的工具
 export default app;
-
-

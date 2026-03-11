@@ -124,11 +124,13 @@ export default function App() {
   const SESSIONS_PER_PAGE = 12;
   const RECORDS_PER_PAGE = 50;
 
+  // 新增：批量删除状态管理
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   // 平台 API Key 选择逻辑
   const handleOpenSelectKey = async () => {
     if (window.aistudio?.openSelectKey) {
       await window.aistudio.openSelectKey();
-      // 提示用户刷新或自动处理
       setError("已打开 API Key 选择对话框。选择后请重试识别。");
     } else {
       setIsSettingsOpen(true);
@@ -143,7 +145,6 @@ export default function App() {
 
   const categories = ['全部', '软件过程改进', '软件测试技术'] as const;
 
-  // Fetch sessions on mount
   useEffect(() => {
     fetchSessions();
   }, []);
@@ -201,6 +202,8 @@ export default function App() {
       if (!res.ok) throw new Error("获取课程详情失败");
       const data = await res.json();
       setCurrentSession(data);
+      // 新增：每次进入课程清空选中状态
+      setSelectedIds([]);
       setView('session');
     } catch (err: any) {
       console.error("Failed to fetch session detail", err);
@@ -249,6 +252,8 @@ export default function App() {
             records: prev.records.filter(r => r.personId !== confirmDelete.personId)
           };
         });
+        // 从已选中列表中移除
+        setSelectedIds(prev => prev.filter(id => id !== confirmDelete.personId));
       }
       setConfirmDelete(null);
     } catch (err: any) {
@@ -338,7 +343,7 @@ export default function App() {
 
   const handleAddManualRecord = async () => {
     if (!currentSession) return;
-    setIsStudentSignInOpen(true); // Reuse the same modal for manual add if admin
+    setIsStudentSignInOpen(true);
   };
 
   const handleDeleteRecord = async (personId: string) => {
@@ -346,12 +351,62 @@ export default function App() {
     setConfirmDelete({ type: 'record', id: currentSession.id, personId });
   };
 
+  // 新增：批量删除方法
+  const handleBatchDelete = async () => {
+    if (!currentSession || selectedIds.length === 0) return;
+    if (!confirm(`确定要永久删除选中的 ${selectedIds.length} 条记录吗？此操作不可恢复。`)) return;
+
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/records/batch-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personIds: selectedIds })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "批量删除失败");
+      }
+      
+      // 更新前端状态，直接过滤掉被删除的记录
+      setCurrentSession(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          records: prev.records.filter(r => !selectedIds.includes(r.personId))
+        };
+      });
+      setSelectedIds([]); // 清空勾选
+    } catch (err: any) {
+      alert(err.message || "批量删除失败");
+    }
+  };
+
+  // 新增：单选/取消单选
+  const toggleSelect = (personId: string) => {
+    setSelectedIds(prev => 
+      prev.includes(personId) 
+        ? prev.filter(id => id !== personId) 
+        : [...prev, personId]
+    );
+  };
+
+  // 新增：全选/取消全选
+  const toggleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!currentSession) return;
+    if (e.target.checked) {
+      // 选中当前列表中的所有人
+      setSelectedIds(currentSession.records.map(r => r.personId));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
   const handleAIProcess = async () => {
     if (!currentSession || files.length === 0) return;
     setIsProcessing(true);
     setError(null);
     
-    // 内部函数：压缩图片以提高识别成功率并减少 Payload 大小
     const resizeImage = (file: File): Promise<string> => {
       return new Promise((resolve) => {
         const reader = new FileReader();
@@ -361,7 +416,7 @@ export default function App() {
             const canvas = document.createElement('canvas');
             let width = img.width;
             let height = img.height;
-            const maxSide = 1600; // 1600px 足够人脸识别且能大幅减少数据量
+            const maxSide = 1600;
             
             if (width > height) {
               if (width > maxSide) {
@@ -379,7 +434,7 @@ export default function App() {
             canvas.height = height;
             const ctx = canvas.getContext('2d');
             ctx?.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.85)); // 使用 JPEG 压缩
+            resolve(canvas.toDataURL('image/jpeg', 0.85)); 
           };
           img.src = e.target?.result as string;
         };
@@ -395,7 +450,6 @@ export default function App() {
       const imageData = await Promise.all(imagePromises);
       const identifiedPeople = await processAttendanceImages(imageData, userApiKey || undefined);
       
-      // Sync to backend including images
       const syncRes = await fetch(`/api/sessions/${currentSession.id}/sync`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -410,7 +464,6 @@ export default function App() {
         throw new Error(errorData.error || `同步识别结果到服务器失败 (状态码: ${syncRes.status})`);
       }
 
-      // Refresh detail
       await fetchSessionDetail(currentSession.id);
       setFiles([]);
     } catch (err: any) {
@@ -422,18 +475,13 @@ export default function App() {
 
   const getFilePreview = (appearance: any) => {
     const { imageIndex } = appearance;
-    
-    // 1. Try local files first (during active upload session)
     if (typeof imageIndex === 'number' && files[imageIndex - 1]) {
       return files[imageIndex - 1].preview;
     }
-    
-    // 2. Try persisted images from currentSession
     if (currentSession?.images) {
       const persisted = currentSession.images.find(img => img.index === imageIndex);
       if (persisted) return persisted.data;
     }
-    
     return '';
   };
 
@@ -450,10 +498,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] text-slate-900 font-sans selection:bg-indigo-100">
-      {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('home')}>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => { setView('home'); setSelectedIds([]); }}>
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-indigo-200 shadow-lg">
               <Users className="w-6 h-6 text-white" />
             </div>
@@ -508,7 +555,6 @@ export default function App() {
     </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8 relative z-10">
-        {/* Global Schedule Banner */}
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -709,8 +755,6 @@ export default function App() {
                   </button>
                 </div>
               )}
-
-              
             </motion.div>
           ) : (
             <motion.div 
@@ -722,7 +766,7 @@ export default function App() {
             >
               <div className="flex items-center justify-between">
                 <button 
-                  onClick={() => setView('home')}
+                  onClick={() => { setView('home'); setSelectedIds([]); }}
                   className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 hover:text-indigo-600 font-bold text-sm rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95"
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -864,12 +908,23 @@ export default function App() {
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input 
                           type="text" 
-                          placeholder="搜索特征描述 (例如: 眼镜, 红衣...)"
+                          placeholder="搜索..."
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
                           className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all text-sm font-medium text-slate-700 placeholder:text-slate-400"
                         />
                       </div>
+
+                      {/* 新增：如果有选中的数据，显示批量删除按钮 */}
+                      {isAdmin && selectedIds.length > 0 && (
+                        <button 
+                          onClick={handleBatchDelete}
+                          className="px-4 py-2.5 bg-red-500 hover:bg-red-600 text-white text-xs font-black rounded-xl flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap shadow-lg shadow-red-200"
+                        >
+                          <Trash2 className="w-4 h-4" /> 批量删除 ({selectedIds.length})
+                        </button>
+                      )}
+
                       {!isAdmin && (
                         <button 
                           onClick={() => setIsStudentSignInOpen(true)} 
@@ -893,6 +948,17 @@ export default function App() {
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50/80 backdrop-blur-md border-b border-slate-100">
+                          {/* 新增：全选 Checkbox */}
+                          {isAdmin && (
+                            <th className="px-6 py-5 w-12 text-center">
+                              <input 
+                                type="checkbox" 
+                                checked={currentSession?.records.length !== undefined && currentSession.records.length > 0 && selectedIds.length === currentSession.records.length}
+                                onChange={toggleSelectAll}
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              />
+                            </th>
+                          )}
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">人员标识</th>
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">姓名</th>
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">学号</th>
@@ -910,7 +976,18 @@ export default function App() {
                           )
                           .slice(0, recordsPage * RECORDS_PER_PAGE)
                           .map(record => (
-                            <tr key={record.personId} className="hover:bg-white transition-all group">
+                            <tr key={record.personId} className={cn("hover:bg-white transition-all group", selectedIds.includes(record.personId) && "bg-indigo-50/50 hover:bg-indigo-50/80")}>
+                            {/* 新增：单选 Checkbox */}
+                            {isAdmin && (
+                              <td className="px-6 py-6 text-center">
+                                <input 
+                                  type="checkbox" 
+                                  checked={selectedIds.includes(record.personId)}
+                                  onChange={() => toggleSelect(record.personId)}
+                                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                />
+                              </td>
+                            )}
                             <td className="px-8 py-6">
                               <span className="text-xs font-black font-mono text-slate-300 bg-slate-100 px-2 py-1 rounded-lg">
                                 {record.personId}
@@ -1255,18 +1332,8 @@ export default function App() {
                 <div className="space-y-6">
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-2">Gemini API Key</label>
-                    {/* <div className="relative">
-                      <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input 
-                        type="password"
-                        value={userApiKey}
-                        onChange={(e) => setUserApiKey(e.target.value)}
-                        placeholder="输入您的 API Key..."
-                        className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
-                      />
-                    </div> */}
                     <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
-                      Key 将保存在本地浏览器中。系统 使用服务器默认配置。
+                      系统已使用服务器默认配置的 API Key 进行识别。
                     </p>
                   </div>
 
@@ -1315,13 +1382,7 @@ export default function App() {
                       onClick={() => setIsSettingsOpen(false)}
                       className="flex-1 py-3 px-4 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors"
                     >
-                      取消
-                    </button>
-                    <button 
-                      onClick={() => saveApiKey(userApiKey)}
-                      className="flex-1 py-3 px-4 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
-                    >
-                      保存配置
+                      关闭
                     </button>
                   </div>
                 </div>
