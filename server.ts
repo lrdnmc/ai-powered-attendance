@@ -369,13 +369,13 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-// 只在本地开发时监听端口，Vercel 线上环境会自动接管
-if (process.env.NODE_ENV !== "production") {
-  const PORT = 3000;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
+// 无论什么环境，都必须启动服务器并监听端口
+// 优先使用环境变量传入的端口 (Cloud Run 会传入 8080)，如果不存在则默认 3000 (用于本地开发)
+const PORT = process.env.PORT || 3000;
 
-// 导出 app 供 Vercel 使用
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+// 依然可以保留导出，不会影响 Cloud Run，且兼容其他可能依赖它的工具
 export default app;
