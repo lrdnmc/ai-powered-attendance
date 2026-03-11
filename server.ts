@@ -369,7 +369,13 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-const PORT = 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// 只在本地开发时监听端口，Vercel 线上环境会自动接管
+if (process.env.NODE_ENV !== "production") {
+  const PORT = 3000;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+// 导出 app 供 Vercel 使用
+export default app;
