@@ -458,6 +458,25 @@ app.post("/api/analyze-attendance", async (req, res) => {
 });
 // 无论什么环境，都必须启动服务器并监听端口
 // 优先使用环境变量传入的端口 (Cloud Run 会传入 8080)，如果不存在则默认 3000 (用于本地开发)
+
+if (process.env.NODE_ENV !== "production") {
+  // 本地开发环境：使用 Vite 中间件
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
+} else {
+  // 云端生产环境：提供 dist 目录下的静态文件
+  app.use(express.static(path.join(__dirname, "dist")));
+  
+  // 捕获所有其他路由，交回给前端 React/Vite 处理 (支持前端路由)
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  });
+}
+
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
