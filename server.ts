@@ -358,31 +358,104 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
 
 // 在 server.ts 中
 
-
 app.post("/api/analyze-attendance", async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY; // 后端读取，绝对安全
-  const { images } = req.body;
-  
-  // ... 把 geminiService.ts 里的 processAttendanceImages 逻辑搬到这里 ...
-  // ... 调用 ai.models.generateContent ...
+  try {
+    // 不再从 req.body 接收 customApiKey，只接收 images
+    const { images } = req.body; 
+    
+    // 【最核心的安全保障】：唯一获取 Key 的途径是服务器自身的系统环境变量
+    const apiKey = process.env.GEMINI_API_KEY;
+    
+    if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey.trim() === "") {
+      return res.status(500).json({ 
+        success: false, 
+        error: "服务器端未配置 API Key 环境变量，请管理员在 Google Cloud Run 的“变量和密钥”中设置 GEMINI_API_KEY。" 
+      });
+    }
 
-  res.json({ success: true, data: identifiedPersons });
+    const ai = new GoogleGenAI({ apiKey });
+    const contents: any[] = [];
+    
+    images.forEach((img: any, index: number) => {
+      const base64Data = img.data.includes(',') ? img.data.split(',')[1] : img.data;
+      contents.push({ text: `[IMG ${index + 1}] ${img.name}` });
+      contents.push({
+        inlineData: { data: base64Data, mimeType: "image/jpeg" },
+      });
+    });
+
+    const prompt = `
+      你是一个顶级课堂考勤助手。这是一个大型课程（约 41 人）。
+      请深度分析照片，识别出尽可能多的不重复到课人员。
+      
+      关键准则：
+      1. 真实识别：根据照片实际情况识别，不需要强行凑满 41 人。
+      2. 必须有头：仅识别头部清晰可见的人员，严禁识别只有身体、没有头部的目标。严禁将衣服、窗帘、椅子或其他非生物物体误认为人员。
+      3. 全场扫描：仔细寻找后排、角落、侧脸或被部分遮挡的真实人员。
+      4. 跨图去重与关联：通过面部、发型、衣着和座位位置确保同一个人只出现一次。
+      5. 详细描述：对人员的特征进行详细描述（15-30字）。
+      6. 严格使用极简 JSON 结构：[{"id":"P1","d":"描述","a":[{"i":1,"b":[y,x,y,x]}]}]
+      i 是图片索引(1-based)，b 是 [ymin, xmin, ymax, xmax]。
+      
+      请直接返回 JSON 数组，不要任何开头或结尾文字。
+    `;
+
+    contents.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview", 
+      contents: [{ parts: contents }],
+      config: {
+        responseMimeType: "application/json",
+        maxOutputTokens: 16384,
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              d: { type: Type.STRING },
+              a: {
+                type: Type.ARRAY, 
+                items: { 
+                  type: Type.OBJECT,
+                  properties: {
+                    i: { type: Type.INTEGER },
+                    b: { type: Type.ARRAY, items: { type: Type.NUMBER } }
+                  },
+                  required: ["i", "b"]
+                }
+              },
+            },
+            required: ["id", "d", "a"],
+          },
+        },
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("AI 未返回有效内容");
+    
+    const jsonText = text.trim().replace(/^```json\n?/, "").replace(/\n?```$/, "").replace(/^```\n?/, "").replace(/\n?```$/, "");
+    const compactData = JSON.parse(jsonText);
+    
+    const mappedData = compactData.map((item: any) => ({
+      id: item.id,
+      description: item.d,
+      appearances: item.a.map((app: any) => ({
+        imageIndex: app.i,
+        imageName: images[app.i - 1]?.name || `Image ${app.i}`,
+        box_2d: app.b
+      }))
+    }));
+
+    res.json({ success: true, data: mappedData });
+
+  } catch (error: any) {
+    console.error("Backend AI Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
-
-// Vite middleware for development
-if (process.env.NODE_ENV !== "production") {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: "spa",
-  });
-  app.use(vite.middlewares);
-} else {
-  app.use(express.static(path.join(__dirname, "dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
-  });
-}
-
 // 无论什么环境，都必须启动服务器并监听端口
 // 优先使用环境变量传入的端口 (Cloud Run 会传入 8080)，如果不存在则默认 3000 (用于本地开发)
 const PORT = process.env.PORT || 3000;
