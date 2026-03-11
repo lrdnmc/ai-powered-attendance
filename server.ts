@@ -285,8 +285,10 @@ app.post("/api/sessions/:id/records", async (req, res) => {
     await db.prepare("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(id, req.params.id, personId || `M${Date.now()}`, description || "手动添加", "[]", name || "", studentId || "", photo || null);
     res.json({ id, personId, description, name, studentId, photo });
-  } catch (err) {
-    res.status(500).json({ error: "添加失败" });
+  } catch (err: any) {
+    // 💡 修改3：在后端日志打印真实错误，并将其返回给前端
+    console.error("【数据库写入详细错误】:", err);
+    res.status(500).json({ error: `数据库添加失败: ${err.message || String(err)}` });
   }
 });
 
