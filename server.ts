@@ -403,7 +403,7 @@ app.post("/api/analyze-attendance", async (req, res) => {
     contents.push({ text: prompt });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview", 
+      model: "gemini-2.5-flash", 
       contents: [{ parts: contents }],
       config: {
         responseMimeType: "application/json",

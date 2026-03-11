@@ -1255,7 +1255,7 @@ export default function App() {
                 <div className="space-y-6">
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-2">Gemini API Key</label>
-                    <div className="relative">
+                    {/* <div className="relative">
                       <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                       <input 
                         type="password"
@@ -1264,9 +1264,9 @@ export default function App() {
                         placeholder="输入您的 API Key..."
                         className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                       />
-                    </div>
+                    </div> */}
                     <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
-                      Key 将保存在本地浏览器中。如果未填写，系统将尝试使用服务器默认配置。
+                      Key 将保存在本地浏览器中。系统 使用服务器默认配置。
                     </p>
                   </div>
 
