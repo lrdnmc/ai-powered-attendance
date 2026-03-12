@@ -492,19 +492,46 @@ app.post("/api/analyze-attendance", async (req, res) => {
   }
 });
 
-if (process.env.NODE_ENV !== "production") {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: "spa",
-  });
-  app.use(vite.middlewares);
+// ... 上面的所有 API 路由保持完全不变 ...
+
+// 💡 保护 1：精准识别是否在 Google Cloud Run 环境
+const isCloudRunEnv = !!process.env.K_SERVICE || process.env.NODE_ENV === "production";
+
+if (!isCloudRunEnv) {
+  // 本地开发环境：异步启动 Vite，绝对不阻塞主线程
+  (async () => {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  })();
 } else {
+  // 云端生产环境：跳过繁重的编译，直接秒级挂载编译好的 dist 目录
   app.use(express.static(path.join(__dirname, "dist")));
-  
   app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "dist", "index.html"));
   });
 }
+
+// Google Cloud 默认使用 8080 端口
+const PORT = process.env.PORT || 8080;
+
+// 💡 保护 2：最高优先级！无条件第一时间监听端口，直接化解 Cloud Run 的超时绝杀
+app.listen(PORT as number, "0.0.0.0", () => {
+  console.log(`✅ Web Server is successfully listening on port ${PORT}`);
+  
+  // 端口打开、向 Google Cloud 报告存活之后，再慢慢去连接云数据库和建表
+  initDb()
+    .then(() => {
+      console.log("✅ 数据库连接与表结构初始化全部完成");
+    })
+    .catch((err) => {
+      // 即使数据库填错连不上，服务器依然活着，你可以去查日志，而不是直接崩溃
+      console.error("❌ 数据库初始化失败:", err);
+    });
+});
+
 
 const PORT = process.env.PORT || 3000;
 
