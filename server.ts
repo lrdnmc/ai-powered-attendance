@@ -11,10 +11,13 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
+// 💡 全局防崩溃护盾：无论哪里发生报错，绝对不让服务器闪退引发 503！
+process.on('uncaughtException', (err) => console.error('💥 未捕获的全局异常:', err));
+process.on('unhandledRejection', (reason) => console.error('💥 未处理的 Promise 拒绝:', reason));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Database abstraction for Vercel (Postgres) or Local (SQLite)
 interface DB {
   exec(sql: string): void;
   prepare(sql: string): any;
@@ -37,8 +40,9 @@ if (isPostgres) {
       try { await client.query(sql); } finally { client.release(); }
     },
     prepare: (sql: string) => {
-      // Mocking better-sqlite3 prepare for Postgres
-      const pgSql = sql.replace(/\?/g, (match, index) => `$${index + 1}`);
+      let paramIndex = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+      
       return {
         run: async (...args: any[]) => {
           const client = await pool.connect();
@@ -79,7 +83,6 @@ if (isPostgres) {
   };
 } else {
   console.log("Using SQLite database...");
-  // 💡 修改1：判断如果是 Cloud Run 或生产环境，使用内存挂载目录 /tmp 防止只读报错
   const isCloudRun = !!process.env.K_SERVICE || process.env.NODE_ENV === "production";
   const dbPath = isCloudRun ? "/tmp/attendance.db" : "attendance.db";
   
@@ -101,7 +104,6 @@ if (isPostgres) {
         const trans = sqlite.transaction((...args: any[]) => {
           return fn(null, ...args);
         });
-        
         try {
           sqlite.prepare('BEGIN').run();
           const result = await fn(null, ...args);
@@ -116,7 +118,6 @@ if (isPostgres) {
   };
 }
 
-// Initialize DB
 const initDb = async () => {
   const schema = `
     CREATE TABLE IF NOT EXISTS sessions (
@@ -126,33 +127,29 @@ const initDb = async () => {
       description TEXT,
       category TEXT DEFAULT '未分类'
     );
-    
     CREATE TABLE IF NOT EXISTS attendance (
       id TEXT PRIMARY KEY,
       sessionId TEXT NOT NULL,
       personId TEXT NOT NULL,
       description TEXT,
-      appearances TEXT, -- JSON string
+      appearances TEXT,
       name TEXT,
       studentId TEXT,
-      photo TEXT, -- Base64 for student self sign-in
+      photo TEXT,
       FOREIGN KEY (sessionId) REFERENCES sessions(id) ON DELETE CASCADE
     );
-  
     CREATE TABLE IF NOT EXISTS session_images (
       id TEXT PRIMARY KEY,
       sessionId TEXT NOT NULL,
-      data TEXT NOT NULL, -- Base64
+      data TEXT NOT NULL,
       imageIndex INTEGER,
       FOREIGN KEY (sessionId) REFERENCES sessions(id) ON DELETE CASCADE
     );
-  
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       passwordHash TEXT NOT NULL
     );
-
     CREATE INDEX IF NOT EXISTS idx_attendance_session ON attendance(sessionId);
     CREATE INDEX IF NOT EXISTS idx_images_session ON session_images(sessionId);
   `;
@@ -163,7 +160,6 @@ const initDb = async () => {
     db.exec(schema);
   }
 
-  // Initialize default admin
   const adminExists = await db.prepare("SELECT * FROM users WHERE username = 'root'").get();
   if (!adminExists) {
     const salt = bcrypt.genSaltSync(10);
@@ -173,7 +169,6 @@ const initDb = async () => {
     console.log("Default admin user 'root' created.");
   }
 
-  // Migrations
   try {
     if (isPostgres) {
       await db.exec("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS photo TEXT");
@@ -181,24 +176,18 @@ const initDb = async () => {
       await db.prepare("SELECT photo FROM attendance LIMIT 1").get();
     }
   } catch (e) {
-    console.log("Adding photo column...");
-    await db.exec("ALTER TABLE attendance ADD COLUMN photo TEXT");
+    try { await db.exec("ALTER TABLE attendance ADD COLUMN photo TEXT"); } catch(err){}
   }
 };
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
+app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
 app.post("/api/login", async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ success: false, error: "请提供用户名和密码" });
-
   try {
+    const { username, password } = req.body;
     const user = await db.prepare("SELECT * FROM users WHERE username = ?").get(username);
     if (user && bcrypt.compareSync(password, user.passwordHash)) {
       res.json({ success: true, isAdmin: true });
@@ -206,7 +195,7 @@ app.post("/api/login", async (req, res) => {
       res.status(401).json({ success: false, error: "用户名或密码错误" });
     }
   } catch (err) {
-    res.status(500).json({ success: false, error: "服务器内部错误" });
+    res.status(500).json({ success: false, error: "服务器错误" });
   }
 });
 
@@ -214,138 +203,115 @@ app.get("/api/sessions", async (req, res) => {
   try {
     const sessions = await db.prepare("SELECT * FROM sessions ORDER BY date DESC").all();
     res.json(sessions);
-  } catch (err) {
-    res.status(500).json({ error: "获取课程列表失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "获取失败" }); 
   }
 });
 
 app.post("/api/sessions", async (req, res) => {
-  const { title, date, description, category } = req.body;
-  const id = uuidv4();
-  await db.prepare("INSERT INTO sessions (id, title, date, description, category) VALUES (?, ?, ?, ?, ?)")
-    .run(id, title, date || new Date().toISOString(), description || "", category || "未分类");
-  res.json({ id, title, date, description, category });
+  try {
+    const { title, date, description, category } = req.body;
+    const id = uuidv4();
+    await db.prepare("INSERT INTO sessions (id, title, date, description, category) VALUES (?, ?, ?, ?, ?)")
+      .run(id, title, date || new Date().toISOString(), description || "", category || "未分类");
+    res.json({ id, title, date, description, category });
+  } catch (err: any) {
+    console.error("新建课程失败:", err);
+    res.status(500).json({ error: "新建课程失败: " + err.message });
+  }
 });
 
 app.get("/api/sessions/:id", async (req, res) => {
   try {
     const session = await db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found" });
-    
     const records = await db.prepare("SELECT * FROM attendance WHERE sessionId = ?").all(req.params.id);
     const images = await db.prepare("SELECT * FROM session_images WHERE sessionId = ?").all(req.params.id);
-    
     res.json({ 
       ...session, 
-      records: records.map((r: any) => ({
-        ...r,
-        appearances: JSON.parse(r.appearances || "[]")
-      })),
-      images: images.map((img: any) => ({
-        id: img.id,
-        data: img.data,
-        index: img.imageIndex
-      }))
+      records: records.map((r: any) => ({ ...r, appearances: JSON.parse(r.appearances || "[]") })),
+      images: images.map((img: any) => ({ id: img.id, data: img.data, index: img.imageIndex }))
     });
-  } catch (err) {
-    res.status(500).json({ error: "获取详情失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "获取详情失败" }); 
   }
 });
 
 app.delete("/api/sessions/:id", async (req, res) => {
   try {
-    // 💡 修复：手动先删除该课程下的所有图片和考勤记录，无视数据库外键限制
     await db.prepare("DELETE FROM session_images WHERE sessionId = ?").run(req.params.id);
     await db.prepare("DELETE FROM attendance WHERE sessionId = ?").run(req.params.id);
     await db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
     res.json({ success: true });
-  } catch (err) {
-    console.error("Delete session error:", err);
-    res.status(500).json({ error: "删除失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "删除失败" }); 
   }
 });
 
 app.put("/api/sessions/:id", async (req, res) => {
-  const { title, date, description, category } = req.body;
   try {
+    const { title, date, description, category } = req.body;
     await db.prepare("UPDATE sessions SET title = ?, date = ?, description = ?, category = ? WHERE id = ?")
       .run(title, date || new Date().toISOString(), description || "", category || "未分类", req.params.id);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "更新课程失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "更新失败" }); 
   }
 });
 
 app.put("/api/sessions/:id/records/:personId", async (req, res) => {
-  const { name, studentId } = req.body;
   try {
+    const { name, studentId } = req.body;
     await db.prepare("UPDATE attendance SET name = ?, studentId = ? WHERE sessionId = ? AND personId = ?")
       .run(name, studentId, req.params.id, req.params.personId);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "更新失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "更新失败" }); 
   }
 });
 
 app.post("/api/sessions/:id/records", async (req, res) => {
-  const { personId, description, name, studentId, photo } = req.body;
-  const id = uuidv4();
   try {
+    const { personId, description, name, studentId, photo } = req.body;
+    const id = uuidv4();
     await db.prepare("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(id, req.params.id, personId || `M${Date.now()}`, description || "手动添加", "[]", name || "", studentId || "", photo || null);
     res.json({ id, personId, description, name, studentId, photo });
-  } catch (err: any) {
-    // 💡 修改3：抛出真实的错误给前端，方便调试排错
-    console.error("【数据库写入详细错误】:", err);
-    res.status(500).json({ error: `数据库添加失败: ${err.message || String(err)}` });
+  } catch (err: any) { 
+    res.status(500).json({ error: err.message }); 
   }
 });
 
 app.delete("/api/sessions/:id/records/:personId", async (req, res) => {
   try {
-    await db.prepare("DELETE FROM attendance WHERE sessionId = ? AND personId = ?")
-      .run(req.params.id, req.params.personId);
+    await db.prepare("DELETE FROM attendance WHERE sessionId = ? AND personId = ?").run(req.params.id, req.params.personId);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "删除记录失败" });
+  } catch (err) { 
+    res.status(500).json({ error: "删除失败" }); 
   }
 });
 
-// 💡 新增：批量删除接口
 app.post("/api/sessions/:id/records/batch-delete", async (req, res) => {
-  const { personIds } = req.body;
-  
-  if (!personIds || !Array.isArray(personIds) || personIds.length === 0) {
-    return res.status(400).json({ success: false, error: "请提供要删除的记录ID数组" });
-  }
-
   try {
+    const { personIds } = req.body;
+    if (!personIds || !Array.isArray(personIds) || personIds.length === 0) return res.status(400).json({ success: false, error: "缺少ID" });
     const placeholders = personIds.map(() => '?').join(',');
-    await db.prepare(`DELETE FROM attendance WHERE sessionId = ? AND personId IN (${placeholders})`)
-      .run(req.params.id, ...personIds);
-      
+    await db.prepare(`DELETE FROM attendance WHERE sessionId = ? AND personId IN (${placeholders})`).run(req.params.id, ...personIds);
     res.json({ success: true, deletedCount: personIds.length });
-  } catch (err: any) {
-    console.error("Batch delete error:", err);
-    res.status(500).json({ success: false, error: `批量删除失败: ${err.message}` });
+  } catch (err: any) { 
+    res.status(500).json({ success: false, error: err.message }); 
   }
 });
 
 app.put("/api/sessions/:id/sync", async (req, res) => {
-  const { records, images } = req.body;
-  const sessionId = req.params.id;
-  
-  if (!records || !Array.isArray(records)) {
-    return res.status(400).json({ success: false, error: "无效的记录数据" });
-  }
-
   try {
+    const { records, images } = req.body;
+    const sessionId = req.params.id;
     const syncFn = async (client: any) => {
       const run = async (sql: string, args: any[]) => {
         if (isPostgres && client) return await client.query(sql.replace(/\?/g, (m: any, i: any) => `$${i + 1}`), args);
         return db.prepare(sql).run(...args);
       };
-
       const query = async (sql: string, args: any[]) => {
         if (isPostgres && client) {
           const res = await client.query(sql.replace(/\?/g, (m: any, i: any) => `$${i + 1}`), args);
@@ -353,67 +319,47 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
         }
         return db.prepare(sql).all(...args);
       };
-
-      // 1. Handle images (防 null 处理)
       if (images && images.length > 0) {
         await run("DELETE FROM session_images WHERE sessionId = ?", [sessionId]);
         for (const img of images) {
-          await run("INSERT INTO session_images (id, sessionId, data, imageIndex) VALUES (?, ?, ?, ?)", 
-            [uuidv4(), sessionId, img.data || "", img.index || 0]);
+          await run("INSERT INTO session_images (id, sessionId, data, imageIndex) VALUES (?, ?, ?, ?)", [uuidv4(), sessionId, img.data || "", img.index || 0]);
         }
       }
-
-      // 2. Handle records efficiently
       const existingRecords = await query("SELECT personId FROM attendance WHERE sessionId = ?", [sessionId]);
       const existingPersonIds = new Set(existingRecords.map((r: any) => r.personId));
 
       for (const rec of records) {
-        const recordId = `${sessionId}_${rec.id}`;
-        
-        // 💡 核心修复：强制消除 undefined，防止 Postgres 驱动崩溃
-        const safeDescription = rec.description || "";
-        const safeAppearances = JSON.stringify(rec.appearances || []);
-
-        if (existingPersonIds.has(rec.id)) {
-          await run("UPDATE attendance SET description = ?, appearances = ? WHERE sessionId = ? AND personId = ?", 
-            [safeDescription, safeAppearances, sessionId, rec.id]);
+        const safeId = rec.id || `P_AUTO_${Math.random().toString(36).slice(2, 6)}`;
+        const safeDesc = rec.description || "";
+        const safeApp = JSON.stringify(rec.appearances || []);
+        if (existingPersonIds.has(safeId)) {
+          await run("UPDATE attendance SET description = ?, appearances = ? WHERE sessionId = ? AND personId = ?", [safeDesc, safeApp, sessionId, safeId]);
         } else {
-          await run("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-            [recordId, sessionId, rec.id, safeDescription, safeAppearances, "", ""]);
+          await run("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId) VALUES (?, ?, ?, ?, ?, ?, ?)", [`${sessionId}_${safeId}`, sessionId, safeId, safeDesc, safeApp, "", ""]);
+          existingPersonIds.add(safeId);
         }
       }
     };
-
     await db.transaction(syncFn)(records, images);
     res.json({ success: true });
-  } catch (err: any) {
-    console.error("Sync error:", err);
-    res.status(500).json({ success: false, error: "同步失败: " + err.message });
+  } catch (err: any) { 
+    res.status(500).json({ success: false, error: err.message }); 
   }
 });
 
 app.post("/api/analyze-attendance", async (req, res) => {
   try {
     const { images } = req.body; 
-    
     const apiKey = process.env.GEMINI_API_KEY;
-    
-    if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey.trim() === "") {
-      return res.status(500).json({ 
-        success: false, 
-        error: "服务器端未配置 API Key 环境变量，请管理员在 Google Cloud Run 的“变量和密钥”中设置 GEMINI_API_KEY。" 
-      });
-    }
+    if (!apiKey) return res.status(500).json({ success: false, error: "未配置 API Key" });
 
     const ai = new GoogleGenAI({ apiKey });
     const contents: any[] = [];
     
     images.forEach((img: any, index: number) => {
       const base64Data = img.data.includes(',') ? img.data.split(',')[1] : img.data;
-      contents.push({ text: `[IMG ${index + 1}] ${img.name}` });
-      contents.push({
-        inlineData: { data: base64Data, mimeType: "image/jpeg" },
-      });
+      contents.push({ text: `[IMG ${index + 1}]` });
+      contents.push({ inlineData: { data: base64Data, mimeType: "image/jpeg" } });
     });
 
     const prompt = `
@@ -434,15 +380,15 @@ app.post("/api/analyze-attendance", async (req, res) => {
     
     请直接返回 JSON 数组，不要任何开头或结尾文字。
     `;
-
     contents.push({ text: prompt });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview", 
+      model: "gemini-2.5-pro",
       contents: [{ parts: contents }],
       config: {
-        responseMimeType: "application/json",
+        temperature: 0.1,
         maxOutputTokens: 16384,
+        responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: {
@@ -454,10 +400,7 @@ app.post("/api/analyze-attendance", async (req, res) => {
                 type: Type.ARRAY, 
                 items: { 
                   type: Type.OBJECT,
-                  properties: {
-                    i: { type: Type.INTEGER },
-                    b: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                  },
+                  properties: { i: { type: Type.INTEGER }, b: { type: Type.ARRAY, items: { type: Type.NUMBER } } },
                   required: ["i", "b"]
                 }
               },
@@ -469,65 +412,61 @@ app.post("/api/analyze-attendance", async (req, res) => {
     });
 
     const text = response.text;
-    if (!text) throw new Error("AI 未返回有效内容");
+    if (!text) throw new Error("AI 返回为空");
     
-    const jsonText = text.trim().replace(/^```json\n?/, "").replace(/\n?```$/, "").replace(/^```\n?/, "").replace(/\n?```$/, "");
-    const compactData = JSON.parse(jsonText);
+    let jsonText = text;
+    const startIndex = text.indexOf('[');
+    const endIndex = text.lastIndexOf(']');
+    if (startIndex !== -1 && endIndex !== -1) {
+      jsonText = text.substring(startIndex, endIndex + 1);
+    }
     
-    const mappedData = compactData.map((item: any) => ({
-      id: item.id,
-      description: item.d,
-      appearances: item.a.map((app: any) => ({
-        imageIndex: app.i,
-        imageName: images[app.i - 1]?.name || `Image ${app.i}`,
-        box_2d: app.b
+    let compactData;
+    try {
+      compactData = JSON.parse(jsonText);
+    } catch (e) {
+      throw new Error("AI 输出格式异常，请重试");
+    }
+    
+    const mappedData = compactData.map((item: any, idx: number) => ({
+      id: item.id || `P${idx}`,
+      description: item.d || "未知描述",
+      appearances: (item.a || []).map((app: any) => ({
+        imageIndex: app.i || 1,
+        imageName: images[(app.i || 1) - 1]?.name || `Image`,
+        box_2d: app.b || [0, 0, 0, 0]
       }))
     }));
 
     res.json({ success: true, data: mappedData });
-
   } catch (error: any) {
-    console.error("Backend AI Error:", error);
+    console.error("AI Error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 💡 保护 1：精准识别是否在 Google Cloud Run 环境
 const isCloudRunEnv = !!process.env.K_SERVICE || process.env.NODE_ENV === "production";
 
 if (!isCloudRunEnv) {
-  // 本地开发环境：异步启动 Vite，绝对不阻塞主线程
   (async () => {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   })();
 } else {
-  // 云端生产环境：跳过繁重的编译，直接秒级挂载编译好的 dist 目录
   app.use(express.static(path.join(__dirname, "dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
-  });
+  app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
 }
 
-// Google Cloud 默认使用 8080 端口
+// 端口监听配置必须在整个文件的最底部
 const PORT = process.env.PORT || 8080;
 
-// 💡 保护 2：最高优先级！无条件第一时间监听端口，直接化解 Cloud Run 的超时绝杀
 app.listen(PORT as number, "0.0.0.0", () => {
   console.log(`✅ Web Server is successfully listening on port ${PORT}`);
   
-  // 端口打开、向 Google Cloud 报告存活之后，再慢慢去连接云数据库和建表
+  // 服务器启动后，再开始安全地去初始化数据库
   initDb()
-    .then(() => {
-      console.log("✅ 数据库连接与表结构初始化全部完成");
-    })
-    .catch((err) => {
-      // 即使数据库填错连不上，服务器依然活着，你可以去查日志，而不是直接崩溃
-      console.error("❌ 数据库初始化失败:", err);
-    });
+    .then(() => console.log("✅ 数据库连接与表结构初始化全部完成"))
+    .catch((err) => console.error("❌ 数据库初始化失败:", err));
 });
 
 export default app;
