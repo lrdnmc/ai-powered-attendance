@@ -936,6 +936,47 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* 💡 补回：图片点击放大预览的弹窗 */}
+      <AnimatePresence>
+        {selectedImage && (
+          <motion.div 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-slate-950/95 backdrop-blur-xl"
+            onClick={() => setSelectedImage(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              className="relative max-w-5xl w-full max-h-full flex items-center justify-center"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="relative rounded-[2.5rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] border border-white/10">
+                <img src={selectedImage.src} className="max-w-full max-h-[80vh] object-contain" />
+                {selectedImage.box && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.3, type: 'spring' }}
+                    className="absolute border-4 border-yellow-400 rounded-full shadow-[0_0_0_9999px_rgba(0,0,0,0.7),0_0_30px_rgba(255,255,0,0.5)]"
+                    style={{
+                      top: `${selectedImage.box[0] / 10}%`,
+                      left: `${selectedImage.box[1] / 10}%`,
+                      width: `${(selectedImage.box[3] - selectedImage.box[1]) / 10}%`,
+                      height: `${(selectedImage.box[2] - selectedImage.box[0]) / 10}%`,
+                    }}
+                  />
+                )}
+              </div>
+              <button 
+                onClick={() => setSelectedImage(null)} 
+                className="absolute -top-16 right-0 md:-right-16 w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white backdrop-blur-md border border-white/20 transition-all active:scale-90"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {confirmDelete && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md" onClick={() => setConfirmDelete(null)}>
