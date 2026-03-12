@@ -286,7 +286,6 @@ export default function App() {
     e.preventDefault();
     if (!currentSession || !studentSignInData.name || !studentSignInData.studentId) return;
 
-    // 💡 新增：拦截校验，强制要求必须上传照片
     if (!studentSignInData.photo) {
       alert("请必须上传一张照片完成签到验证！");
       return;
@@ -317,7 +316,6 @@ export default function App() {
     }
   };
 
-  // 💡 修复：补回了缺失的手动补录/学生签到打开按钮事件
   const handleAddManualRecord = async () => {
     if (!currentSession) return;
     setIsStudentSignInOpen(true);
@@ -897,7 +895,6 @@ export default function App() {
                   <input type="text" required value={studentSignInData.studentId} onChange={e => setStudentSignInData(prev => ({ ...prev, studentId: e.target.value }))} className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" placeholder="请输入学号" />
                 </div>
                 
-                {/* 💡 新增恢复的照片上传区域，并设为必填效果 */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">个人照片 (必填)</label>
                   <div className="flex items-center gap-4">
@@ -933,6 +930,155 @@ export default function App() {
               </form>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {confirmDelete && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md" onClick={() => setConfirmDelete(null)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white max-w-sm w-full rounded-[2.5rem] p-10 shadow-2xl text-center" onClick={e => e.stopPropagation()}>
+              <h3 className="text-2xl font-black text-slate-800 mb-2">确认删除？</h3>
+              <div className="flex gap-4 mt-8">
+                <button onClick={() => setConfirmDelete(null)} className="flex-1 px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black">取消</button>
+                <button onClick={confirmDeleteAction} className="flex-1 px-6 py-4 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-black shadow-xl shadow-red-100">确认删除</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 💡 补回：管理员登录 Modal */}
+      <AnimatePresence>
+        {isLoginModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md"
+            onClick={() => setIsLoginModalOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              className="bg-white max-w-md w-full rounded-[2.5rem] p-10 shadow-2xl relative overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 blur-3xl -mr-16 -mt-16 pointer-events-none" />
+
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-100 mb-4">
+                  <Lock className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight">管理员登录</h3>
+                <p className="text-sm text-slate-400 font-medium mt-1">请输入管理员凭据以访问控制面板</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">用户名</label>
+                  <input
+                    type="text"
+                    required
+                    value={loginData.username}
+                    onChange={e => setLoginData(prev => ({ ...prev, username: e.target.value }))}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white outline-none transition-all text-slate-800 font-bold placeholder:text-slate-300"
+                    placeholder="请输入用户名"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">密码</label>
+                  <input
+                    type="password"
+                    required
+                    value={loginData.password}
+                    onChange={e => setLoginData(prev => ({ ...prev, password: e.target.value }))}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white outline-none transition-all text-slate-800 font-bold placeholder:text-slate-300"
+                    placeholder="请输入密码"
+                  />
+                </div>
+
+                {loginError && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-500 text-xs font-bold flex items-center gap-2"
+                  >
+                    <AlertCircle className="w-4 h-4" />
+                    {loginError}
+                  </motion.div>
+                )}
+
+                <div className="flex gap-4 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsLoginModalOpen(false)}
+                    className="flex-1 px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black transition-all active:scale-95"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 transition-all active:scale-95"
+                  >
+                    登录
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 💡 补回：API Key Settings Modal */}
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSettingsOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-bold text-slate-800">系统配置</h3>
+                  <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-100 rounded-full">
+                    <X className="w-5 h-5 text-slate-400" />
+                  </button>
+                </div>
+                
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">Gemini API Key</label>
+                    <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
+                      系统已使用服务器默认配置的 API Key 进行识别。
+                    </p>
+                  </div>
+
+                  {window.aistudio && (
+                    <button 
+                      onClick={handleOpenSelectKey}
+                      className="w-full py-3 px-4 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2"
+                    >
+                      使用 AI Studio 官方选 Key 助手
+                    </button>
+                  )}
+
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      onClick={() => setIsSettingsOpen(false)}
+                      className="flex-1 py-3 px-4 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors"
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -977,19 +1123,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {confirmDelete && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-950/60 backdrop-blur-md" onClick={() => setConfirmDelete(null)}>
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white max-w-sm w-full rounded-[2.5rem] p-10 shadow-2xl text-center" onClick={e => e.stopPropagation()}>
-              <h3 className="text-2xl font-black text-slate-800 mb-2">确认删除？</h3>
-              <div className="flex gap-4 mt-8">
-                <button onClick={() => setConfirmDelete(null)} className="flex-1 px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black">取消</button>
-                <button onClick={confirmDeleteAction} className="flex-1 px-6 py-4 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-black shadow-xl shadow-red-100">确认删除</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
