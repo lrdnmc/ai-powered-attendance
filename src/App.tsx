@@ -309,11 +309,37 @@ export default function App() {
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => setStudentSignInData(prev => ({ ...prev, photo: event.target?.result as string }));
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width; 
+        let height = img.height; 
+        
+        // 💡 学生个人签到头像不需要高清原图，最大边长限制为 800 像素足够了
+        const maxSide = 800; 
+        
+        if (width > height) { 
+          if (width > maxSide) { height *= maxSide / width; width = maxSide; } 
+        } else { 
+          if (height > maxSide) { width *= maxSide / height; height = maxSide; } 
+        }
+        
+        canvas.width = width; 
+        canvas.height = height;
+        const ctx = canvas.getContext('2d'); 
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // 💡 压缩为 JPEG 格式，画质 0.7。体积将从几 MB 暴降到 50KB 左右！
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+        setStudentSignInData(prev => ({ ...prev, photo: compressedBase64 }));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleAddManualRecord = async () => {
