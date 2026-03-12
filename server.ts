@@ -254,10 +254,25 @@ app.get("/api/sessions/:id", async (req, res) => {
 
 app.delete("/api/sessions/:id", async (req, res) => {
   try {
+    // 💡 修复：手动先删除该课程下的所有图片和考勤记录，无视数据库外键限制
+    await db.prepare("DELETE FROM session_images WHERE sessionId = ?").run(req.params.id);
+    await db.prepare("DELETE FROM attendance WHERE sessionId = ?").run(req.params.id);
     await db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
     res.json({ success: true });
   } catch (err) {
+    console.error("Delete session error:", err);
     res.status(500).json({ error: "删除失败" });
+  }
+});
+
+app.put("/api/sessions/:id", async (req, res) => {
+  const { title, date, description, category } = req.body;
+  try {
+    await db.prepare("UPDATE sessions SET title = ?, date = ?, description = ?, category = ? WHERE id = ?")
+      .run(title, date || new Date().toISOString(), description || "", category || "未分类", req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "更新课程失败" });
   }
 });
 
