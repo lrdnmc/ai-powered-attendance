@@ -492,8 +492,6 @@ app.post("/api/analyze-attendance", async (req, res) => {
   }
 });
 
-// ... 上面的所有 API 路由保持完全不变 ...
-
 // 💡 保护 1：精准识别是否在 Google Cloud Run 环境
 const isCloudRunEnv = !!process.env.K_SERVICE || process.env.NODE_ENV === "production";
 
@@ -531,19 +529,5 @@ app.listen(PORT as number, "0.0.0.0", () => {
       console.error("❌ 数据库初始化失败:", err);
     });
 });
-
-
-const PORT = process.env.PORT || 3000;
-
-// 💡 修改2：强制等待数据库初始化与建表完全结束，再开始接收前端请求
-initDb()
-  .then(() => {
-    app.listen(PORT as number, "0.0.0.0", () => {
-      console.log(`✅ Server successfully running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("❌ 数据库初始化彻底失败:", err);
-  });
 
 export default app;
