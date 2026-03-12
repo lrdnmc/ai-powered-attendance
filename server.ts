@@ -42,7 +42,7 @@ if (isPostgres) {
     prepare: (sql: string) => {
       let paramIndex = 1;
       const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
-      
+
       return {
         run: async (...args: any[]) => {
           const client = await pool.connect();
@@ -383,7 +383,7 @@ app.post("/api/analyze-attendance", async (req, res) => {
     contents.push({ text: prompt });
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
+      model: "gemini-3-flash-preview",
       contents: [{ parts: contents }],
       config: {
         temperature: 0.1,
