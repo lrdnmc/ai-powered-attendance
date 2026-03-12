@@ -311,6 +311,12 @@ export default function App() {
     }
   };
 
+  // 把这个丢失的函数补回来
+  const handleAddManualRecord = async () => {
+    if (!currentSession) return;
+    setIsStudentSignInOpen(true); // 复用签到弹窗来进行手动补录
+  };
+
   const handleBatchDelete = async () => {
     if (!currentSession || selectedIds.length === 0) return;
     if (!confirm(`确定要删除选中的 ${selectedIds.length} 条记录吗？`)) return;
