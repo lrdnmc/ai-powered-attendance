@@ -257,7 +257,6 @@ export default function App() {
       }
       setConfirmDelete(null);
     } catch (err: any) {
-      // 💡 修复静默报错：这里会弹窗提示删除失败原因，方便排查
       alert(err.message || "删除失败，由于数据库外键限制，请确保后端 server.ts 的删除接口已更新。");
       setConfirmDelete(null);
     }
@@ -286,6 +285,13 @@ export default function App() {
   const handleStudentSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentSession || !studentSignInData.name || !studentSignInData.studentId) return;
+
+    // 💡 新增：拦截校验，强制要求必须上传照片
+    if (!studentSignInData.photo) {
+      alert("请必须上传一张照片完成签到验证！");
+      return;
+    }
+
     setIsSubmittingSignIn(true);
     try {
       const res = await fetch(`/api/sessions/${currentSession.id}/records`, {
@@ -311,10 +317,10 @@ export default function App() {
     }
   };
 
-  // 把这个丢失的函数补回来
+  // 💡 修复：补回了缺失的手动补录/学生签到打开按钮事件
   const handleAddManualRecord = async () => {
     if (!currentSession) return;
-    setIsStudentSignInOpen(true); // 复用签到弹窗来进行手动补录
+    setIsStudentSignInOpen(true);
   };
 
   const handleBatchDelete = async () => {
@@ -673,7 +679,6 @@ export default function App() {
                           >
                             <Edit2 className="w-5 h-5" />
                           </button>
-                          {/* 💡 补充详情页的删除图标 */}
                           <button 
                             onClick={(e) => handleDeleteSession(currentSession.id, e)}
                             className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
@@ -865,6 +870,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* 💡 学生签到/手动补录的弹出 Modal */}
       <AnimatePresence>
         {isStudentSignInOpen && (
           <motion.div 
@@ -873,12 +879,56 @@ export default function App() {
             onClick={() => setIsStudentSignInOpen(false)}
           >
             <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white max-w-md w-full rounded-[2.5rem] p-10 shadow-2xl relative overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-100 mb-4">
+                  <User className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight">{isAdmin ? '手动补录' : '学生自主签到'}</h3>
+                <p className="text-sm text-slate-400 font-medium mt-1">请填写信息并上传面部照片</p>
+              </div>
+
               <form onSubmit={handleStudentSignIn} className="space-y-6">
-                <div className="space-y-2"><input type="text" required value={studentSignInData.name} onChange={e => setStudentSignInData(prev => ({ ...prev, name: e.target.value }))} className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" placeholder="请输入姓名" /></div>
-                <div className="space-y-2"><input type="text" required value={studentSignInData.studentId} onChange={e => setStudentSignInData(prev => ({ ...prev, studentId: e.target.value }))} className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" placeholder="请输入学号" /></div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">姓名</label>
+                  <input type="text" required value={studentSignInData.name} onChange={e => setStudentSignInData(prev => ({ ...prev, name: e.target.value }))} className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" placeholder="请输入姓名" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">学号</label>
+                  <input type="text" required value={studentSignInData.studentId} onChange={e => setStudentSignInData(prev => ({ ...prev, studentId: e.target.value }))} className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" placeholder="请输入学号" />
+                </div>
+                
+                {/* 💡 新增恢复的照片上传区域，并设为必填效果 */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">个人照片 (必填)</label>
+                  <div className="flex items-center gap-4">
+                    <label className="flex-1 cursor-pointer px-6 py-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl hover:bg-slate-100 transition-all flex flex-col items-center justify-center gap-2">
+                      {studentSignInData.photo ? (
+                        <img src={studentSignInData.photo} className="w-16 h-16 rounded-xl object-cover" />
+                      ) : (
+                        <>
+                          <ImageIcon className="w-6 h-6 text-slate-300" />
+                          <span className="text-xs text-slate-400 font-bold">点击上传照片</span>
+                        </>
+                      )}
+                      <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                    </label>
+                    {studentSignInData.photo && (
+                      <button 
+                        type="button"
+                        onClick={() => setStudentSignInData(prev => ({ ...prev, photo: '' }))}
+                        className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex gap-4 pt-2">
                   <button type="button" onClick={() => setIsStudentSignInOpen(false)} className="flex-1 px-6 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black">取消</button>
-                  <button type="submit" className="flex-1 px-6 py-4 bg-indigo-600 text-white rounded-2xl font-black">确认签到</button>
+                  <button type="submit" disabled={isSubmittingSignIn} className="flex-1 px-6 py-4 bg-indigo-600 text-white rounded-2xl font-black disabled:opacity-50">
+                    {isSubmittingSignIn ? '提交中...' : '确认签到'}
+                  </button>
                 </div>
               </form>
             </motion.div>
