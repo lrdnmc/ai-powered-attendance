@@ -337,7 +337,7 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
     const sessionId = req.params.id;
     const syncFn = async (client: any) => {
 
-      // 👇 补丁 1：修复问号替换 Bug，保证 SQL 语句合法
+      // 👇 补丁 1：修复内部事务的正则表达式 Bug，防止 SQL 语句崩溃
       const run = async (sql: string, args: any[]) => {
         if (isPostgres && client) {
           let paramIndex = 1;
@@ -363,7 +363,7 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
       
       const existingRecords = await query("SELECT personId FROM attendance WHERE sessionId = ?", [sessionId]);
       
-      // 👇 补丁 2：兼容 Postgres 小写的 personid，防止主键冲突导致保存失败
+      // 👇 补丁 2：兼容 Postgres 小写的 personid，防止主键冲突导致保存流产
       const existingPersonIds = new Set(existingRecords.map((r: any) => r.personid || r.personId));
 
       for (const rec of records) {
