@@ -32,11 +32,13 @@ if (isPostgres) {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    // 👇 补回这 4 项核心保护配置
-    max: 10,                        // 限制最大并发
-    idleTimeoutMillis: 30000,       // 清理 30 秒不用的僵尸连接
-    connectionTimeoutMillis: 15000, // 给 Neon 足足 15 秒的时间来完成 TLS 握手唤醒！
-    allowExitOnIdle: true           // 允许云端容器安全休眠
+    max: 10,
+    idleTimeoutMillis: 30000,
+    // 👇 1. 修改：延长到 30 秒 (30000)，给足 Neon 深睡唤醒时间
+    connectionTimeoutMillis: 30000, 
+    // 👇 2. 新增：开启 TCP 底层心跳，防止在长达 30 秒的等待中被 Cloud Run 掐断网线
+    keepAlive: true,                
+    allowExitOnIdle: true
   });
 
   // 👇 补回这个避雷针，防止后台断连引发 503 崩溃
