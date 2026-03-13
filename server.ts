@@ -31,8 +31,20 @@ if (isPostgres) {
   console.log("Using Postgres database...");
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    // 👇 补回这 4 项核心保护配置
+    max: 10,                        // 限制最大并发
+    idleTimeoutMillis: 30000,       // 清理 30 秒不用的僵尸连接
+    connectionTimeoutMillis: 15000, // 给 Neon 足足 15 秒的时间来完成 TLS 握手唤醒！
+    allowExitOnIdle: true           // 允许云端容器安全休眠
   });
+
+  // 👇 补回这个避雷针，防止后台断连引发 503 崩溃
+  pool.on('error', (err, client) => {
+    console.error('⚠️ 数据库后台僵尸连接已被清理 (安全拦截):', err.message);
+  });
+
+  
   
   db = {
     exec: async (sql: string) => {
