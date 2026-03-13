@@ -134,6 +134,50 @@ export default function App() {
   const RECORDS_PER_PAGE = 50;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  // 👇 1. 新增：用于存放输入框临时修改值的草稿字典
+  const [draftRecords, setDraftRecords] = useState<Record<string, { name: string, studentId: string }>>({});
+
+  // 👇 2. 新增：只更新本地草稿，绝不触发网络请求（打字瞬间丝滑）
+  const handleDraftChange = (personId: string, field: 'name' | 'studentId', value: string, record: any) => {
+    setDraftRecords(prev => ({
+      ...prev,
+      [personId]: {
+        ...(prev[personId] || { name: record.name, studentId: record.studentId }),
+        [field]: value
+      }
+    }));
+  };
+
+  // 👇 3. 新增：点击“确认修改”时，将两条数据同时打包发送给后端
+  const handleSaveRecord = async (personId: string) => {
+    const draft = draftRecords[personId];
+    if (!draft || !currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/records/${personId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: draft.name, studentId: draft.studentId })
+      });
+      if (!res.ok) throw new Error("保存失败");
+      
+      // 更新全局主状态并清除草稿
+      setCurrentSession(prev => prev ? { 
+        ...prev, 
+        records: prev.records.map(r => r.personId === personId ? { ...r, name: draft.name, studentId: draft.studentId } : r) 
+      } : null);
+      
+      setDraftRecords(prev => {
+        const next = { ...prev };
+        delete next[personId];
+        return next;
+      });
+    } catch (err) {
+      alert("保存失败，请重试");
+    }
+  };
+
+  // ⚠️ 注意：你可以直接删除旧的 handleRecordUpdate 函数了
+
   const handleOpenSelectKey = async () => {
     if (window.aistudio?.openSelectKey) {
       await window.aistudio.openSelectKey();
@@ -262,21 +306,6 @@ export default function App() {
     }
   };
 
-  const handleRecordUpdate = async (personId: string, updates: { name?: string, studentId?: string }) => {
-    if (!currentSession) return;
-    const record = currentSession.records.find(r => r.personId === personId);
-    if (!record) return;
-    const newName = updates.name !== undefined ? updates.name : record.name;
-    const newStudentId = updates.studentId !== undefined ? updates.studentId : record.studentId;
-    try {
-      await fetch(`/api/sessions/${currentSession.id}/records/${personId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName, studentId: newStudentId })
-      });
-      setCurrentSession(prev => prev ? { ...prev, records: prev.records.map(r => r.personId === personId ? { ...r, name: newName, studentId: newStudentId } : r) } : null);
-    } catch (err) {}
-  };
 
   const [isStudentSignInOpen, setIsStudentSignInOpen] = useState(false);
   const [studentSignInData, setStudentSignInData] = useState({ name: '', studentId: '', photo: '' });
@@ -796,7 +825,7 @@ export default function App() {
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">学号</th>
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">特征描述</th>
                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">识别特写</th>
-                          {isAdmin && <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">操作</th>}
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -806,11 +835,25 @@ export default function App() {
                             <td className="px-8 py-6"><span className="text-xs font-black font-mono text-slate-300 bg-slate-100 px-2 py-1 rounded-lg">{record.personId}</span></td>
                             <td className="px-8 py-6">
                               <div className="flex items-center gap-2">
-                                <input type="text" placeholder="姓名" value={record.name} onChange={(e) => handleRecordUpdate(record.personId, { name: e.target.value })} className="bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none py-1 text-base font-black text-slate-700 w-24"/>
+                                <input 
+                                  type="text" 
+                                  placeholder="姓名" 
+                                  value={draftRecords[record.personId]?.name ?? record.name} 
+                                  onChange={(e) => handleDraftChange(record.personId, 'name', e.target.value, record)} 
+                                  className="bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none py-1 text-base font-black text-slate-700 w-24"
+                                />
                                 <Edit2 className="w-3 h-3 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                               </div>
                             </td>
-                            <td className="px-8 py-6"><input type="text" placeholder="学号" value={record.studentId || ''} onChange={(e) => handleRecordUpdate(record.personId, { studentId: e.target.value })} className="bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none py-1 text-sm font-bold text-slate-600 w-28"/></td>
+                            <td className="px-8 py-6">
+                              <input 
+                                type="text" 
+                                placeholder="学号" 
+                                value={draftRecords[record.personId]?.studentId ?? (record.studentId || '')} 
+                                onChange={(e) => handleDraftChange(record.personId, 'studentId', e.target.value, record)} 
+                                className="bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 focus:outline-none py-1 text-sm font-bold text-slate-600 w-28"
+                              />
+                            </td>
                             <td className="px-8 py-6"><p className="text-sm text-slate-500 font-medium leading-relaxed max-w-xs">{record.description}</p></td>
                             <td className="px-8 py-6">
                               <div className="flex flex-wrap gap-3">
@@ -818,7 +861,31 @@ export default function App() {
                                 {record.photo && <motion.button whileHover={{ scale: 1.1, rotate: 2 }} onClick={() => setSelectedImage({ src: record.photo! })} className="relative"><img src={record.photo} className="w-14 h-14 rounded-2xl object-cover border-2 border-indigo-200" /></motion.button>}
                               </div>
                             </td>
-                            {isAdmin && <td className="px-8 py-6 text-right"><button onClick={() => handleDeleteRecord(record.personId)} className="p-3 text-slate-300 hover:text-red-500 rounded-2xl"><Trash2 className="w-5 h-5" /></button></td>}
+                            {/* 将原来包裹删除按钮的 {isAdmin && <td ...>} 这一整段，替换为下方代码： */}
+                            <td className="px-8 py-6 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {/* 只要该行有草稿修改，任何人（包括学生）都可以看到“确认修改”按钮 */}
+                                {draftRecords[record.personId] && (
+                                  <button 
+                                    onClick={() => handleSaveRecord(record.personId)} 
+                                    className="px-3 py-1.5 text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95"
+                                  >
+                                    确认修改
+                                  </button>
+                                )}
+                                
+                                {/* 删除按钮依然受到严格保护，仅管理员可见 */}
+                                {isAdmin && (
+                                  <button 
+                                    onClick={() => handleDeleteRecord(record.personId)} 
+                                    className="p-3 text-slate-300 hover:text-red-500 rounded-2xl transition-all"
+                                    title="删除此人"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
