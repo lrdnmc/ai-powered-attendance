@@ -203,7 +203,9 @@ app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
     const user = await db.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    if (user && bcrypt.compareSync(password, user.passwordHash)) {
+    
+    // 👇 关键修复：把 user.passwordHash 改成 (user.passwordhash || user.passwordHash)
+    if (user && bcrypt.compareSync(password, user.passwordhash || user.passwordHash)) {
       res.json({ success: true, isAdmin: true });
     } else {
       res.status(401).json({ success: false, error: "用户名或密码错误" });
