@@ -243,10 +243,22 @@ app.get("/api/sessions/:id", async (req, res) => {
     if (!session) return res.status(404).json({ error: "Session not found" });
     const records = await db.prepare("SELECT * FROM attendance WHERE sessionId = ?").all(req.params.id);
     const images = await db.prepare("SELECT * FROM session_images WHERE sessionId = ?").all(req.params.id);
+    
+    // 👇 补丁 3：将所有 Postgres 小写字段映射回驼峰命名，确保前端正确渲染 AI 列表
     res.json({ 
       ...session, 
-      records: records.map((r: any) => ({ ...r, appearances: JSON.parse(r.appearances || "[]") })),
-      images: images.map((img: any) => ({ id: img.id, data: img.data, index: img.imageIndex }))
+      records: records.map((r: any) => ({ 
+        ...r, 
+        personId: r.personid || r.personId,
+        sessionId: r.sessionid || r.sessionId,
+        studentId: r.studentid || r.studentId,
+        appearances: JSON.parse(r.appearances || "[]") 
+      })),
+      images: images.map((img: any) => ({ 
+        id: img.id, 
+        data: img.data, 
+        index: img.imageindex ?? img.imageIndex 
+      }))
     });
   } catch (err) { 
     res.status(500).json({ error: "获取详情失败" }); 
@@ -324,25 +336,35 @@ app.put("/api/sessions/:id/sync", async (req, res) => {
     const { records, images } = req.body;
     const sessionId = req.params.id;
     const syncFn = async (client: any) => {
+
+      // 👇 补丁 1：修复问号替换 Bug，保证 SQL 语句合法
       const run = async (sql: string, args: any[]) => {
-        if (isPostgres && client) return await client.query(sql.replace(/\?/g, (m: any, i: any) => `$${i + 1}`), args);
+        if (isPostgres && client) {
+          let paramIndex = 1;
+          return await client.query(sql.replace(/\?/g, () => `$${paramIndex++}`), args);
+        }
         return db.prepare(sql).run(...args);
       };
       const query = async (sql: string, args: any[]) => {
         if (isPostgres && client) {
-          const res = await client.query(sql.replace(/\?/g, (m: any, i: any) => `$${i + 1}`), args);
+          let paramIndex = 1;
+          const res = await client.query(sql.replace(/\?/g, () => `$${paramIndex++}`), args);
           return res.rows;
         }
         return db.prepare(sql).all(...args);
       };
+
       if (images && images.length > 0) {
         await run("DELETE FROM session_images WHERE sessionId = ?", [sessionId]);
         for (const img of images) {
           await run("INSERT INTO session_images (id, sessionId, data, imageIndex) VALUES (?, ?, ?, ?)", [uuidv4(), sessionId, img.data || "", img.index || 0]);
         }
       }
+      
       const existingRecords = await query("SELECT personId FROM attendance WHERE sessionId = ?", [sessionId]);
-      const existingPersonIds = new Set(existingRecords.map((r: any) => r.personId));
+      
+      // 👇 补丁 2：兼容 Postgres 小写的 personid，防止主键冲突导致保存失败
+      const existingPersonIds = new Set(existingRecords.map((r: any) => r.personid || r.personId));
 
       for (const rec of records) {
         const safeId = rec.id || `P_AUTO_${Math.random().toString(36).slice(2, 6)}`;
