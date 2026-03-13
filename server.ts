@@ -332,56 +332,111 @@ app.post("/api/sessions/:id/records/batch-delete", async (req, res) => {
 });
 
 app.put("/api/sessions/:id/sync", async (req, res) => {
+  console.log(`\n========== 🟢 开始处理 AI 数据同步请求 | 课程ID: ${req.params.id} ==========`);
+  
   try {
     const { records, images } = req.body;
     const sessionId = req.params.id;
+
+    // 🕵️ 检查1：确认前端到底有没有把数据成功发过来
+    console.log(`[数据接收] 收到人员记录: ${records?.length || 0} 条`);
+    console.log(`[数据接收] 收到场景图片: ${images?.length || 0} 张`);
+
+    if (!records || !Array.isArray(records)) {
+      console.error("❌ 严重错误: 前端传来的 records 格式不对或为空", records);
+      return res.status(400).json({ success: false, error: "人员记录数据格式无效" });
+    }
+
     const syncFn = async (client: any) => {
-
-      // 👇 补丁 1：修复内部事务的正则表达式 Bug，防止 SQL 语句崩溃
+      // 封装日志版的数据库执行函数，如果 SQL 报错，能精准看出是哪条语句出的问题
       const run = async (sql: string, args: any[]) => {
-        if (isPostgres && client) {
-          let paramIndex = 1;
-          return await client.query(sql.replace(/\?/g, () => `$${paramIndex++}`), args);
+        try {
+          if (isPostgres && client) {
+            let paramIndex = 1;
+            const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+            return await client.query(pgSql, args);
+          }
+          return db.prepare(sql).run(...args);
+        } catch (err: any) {
+          console.error(`❌ [SQL 执行报错 - RUN] \n语句: ${sql}\n参数: ${JSON.stringify(args)}\n错误: ${err.message}`);
+          throw err;
         }
-        return db.prepare(sql).run(...args);
-      };
-      const query = async (sql: string, args: any[]) => {
-        if (isPostgres && client) {
-          let paramIndex = 1;
-          const res = await client.query(sql.replace(/\?/g, () => `$${paramIndex++}`), args);
-          return res.rows;
-        }
-        return db.prepare(sql).all(...args);
       };
 
+      const query = async (sql: string, args: any[]) => {
+        try {
+          if (isPostgres && client) {
+            let paramIndex = 1;
+            const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+            const res = await client.query(pgSql, args);
+            return res.rows;
+          }
+          return db.prepare(sql).all(...args);
+        } catch (err: any) {
+          console.error(`❌ [SQL 执行报错 - QUERY] \n语句: ${sql}\n参数: ${JSON.stringify(args)}\n错误: ${err.message}`);
+          throw err;
+        }
+      };
+
+      // --- 阶段 A：处理图片 ---
+      console.log(`[处理阶段 A] 准备清理并保存 ${images?.length || 0} 张图片...`);
       if (images && images.length > 0) {
         await run("DELETE FROM session_images WHERE sessionId = ?", [sessionId]);
         for (const img of images) {
           await run("INSERT INTO session_images (id, sessionId, data, imageIndex) VALUES (?, ?, ?, ?)", [uuidv4(), sessionId, img.data || "", img.index || 0]);
         }
+        console.log(`✅ [处理阶段 A] 图片保存完成`);
       }
-      
+
+      // --- 阶段 B：查询已有人员防止主键冲突 ---
+      console.log(`[处理阶段 B] 正在查询数据库中该课程已有的人员...`);
       const existingRecords = await query("SELECT personId FROM attendance WHERE sessionId = ?", [sessionId]);
-      
-      // 👇 补丁 2：兼容 Postgres 小写的 personid，防止主键冲突导致保存流产
       const existingPersonIds = new Set(existingRecords.map((r: any) => r.personid || r.personId));
+      console.log(`[处理阶段 B] 数据库中已存在 ${existingPersonIds.size} 名人员`);
+
+      // --- 阶段 C：逐条比对并保存 AI 识别出的人员 ---
+      console.log(`[处理阶段 C] 开始遍历 ${records.length} 条 AI 识别记录并写入数据库...`);
+      let updateCount = 0;
+      let insertCount = 0;
 
       for (const rec of records) {
         const safeId = rec.id || `P_AUTO_${Math.random().toString(36).slice(2, 6)}`;
         const safeDesc = rec.description || "";
         const safeApp = JSON.stringify(rec.appearances || []);
+        
         if (existingPersonIds.has(safeId)) {
+          // 如果该人脸已经存在，则更新特征和出现位置
           await run("UPDATE attendance SET description = ?, appearances = ? WHERE sessionId = ? AND personId = ?", [safeDesc, safeApp, sessionId, safeId]);
+          updateCount++;
         } else {
-          await run("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId) VALUES (?, ?, ?, ?, ?, ?, ?)", [`${sessionId}_${safeId}`, sessionId, safeId, safeDesc, safeApp, "", ""]);
+          // 如果是全新的人脸，则插入新记录
+          const newRecordId = `${sessionId}_${safeId}`;
+          await run("INSERT INTO attendance (id, sessionId, personId, description, appearances, name, studentId) VALUES (?, ?, ?, ?, ?, ?, ?)", [newRecordId, sessionId, safeId, safeDesc, safeApp, "", ""]);
           existingPersonIds.add(safeId);
+          insertCount++;
         }
       }
+      console.log(`✅ [处理阶段 C] 写入完成！其中更新了 ${updateCount} 条，全新插入了 ${insertCount} 条`);
     };
+
+    console.log(`[事务开启] 正在开启数据库事务 (Transaction)...`);
     await db.transaction(syncFn)(records, images);
+    console.log(`========== 🟢 AI 数据同步成功，事务已安全提交！ ==========\n`);
+    
     res.json({ success: true });
+    
   } catch (err: any) { 
-    res.status(500).json({ success: false, error: err.message }); 
+    console.error(`\n========== 🔴 AI 数据同步遭遇致命崩溃 ==========`);
+    console.error(`崩溃原因: ${err.message}`);
+    console.error(`详细堆栈: ${err.stack}`);
+    console.error(`====================================================\n`);
+    
+    // 把详细的错误信息返回给前端的 F12 网络面板，方便你在浏览器里直接查看
+    res.status(500).json({ 
+      success: false, 
+      error: err.message,
+      debug_info: "后端事务已回滚，数据未污染。请查看 Google Cloud 日志获取精确的 SQL 报错行数"
+    }); 
   }
 });
 
